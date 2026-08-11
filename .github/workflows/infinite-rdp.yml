@@ -64,37 +64,35 @@ jobs:
               echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
           }
 
-      - name: Restore Files & Programs from HuggingFace
+      - name: Setup HuggingFace CLI & Restore Files
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_REPO: ${{ secrets.HF_REPO }}
         run: |
+          # تثبيت أدوات HuggingFace
+          pip install huggingface_hub -q
+          huggingface-cli login --token $env:HF_TOKEN
+
           $desktopPath = "C:\Users\RDP\Desktop"
           $downloadsPath = "C:\Users\RDP\Downloads"
+          $cloudRepo = "C:\HF_Cloud"
+          
           if (-not (Test-Path $desktopPath)) { New-Item -ItemType Directory -Path $desktopPath -Force }
           if (-not (Test-Path $downloadsPath)) { New-Item -ItemType Directory -Path $downloadsPath -Force }
-          
+
           Write-Host "Downloading saved files from HuggingFace..."
-          # تحميل ملفات الـ Desktop
-          try {
-              $files = Invoke-RestMethod -Uri "https://huggingface.co/api/datasets/$env:HF_REPO/tree/main" -Headers @{ Authorization = "Bearer $env:HF_TOKEN" }
-              foreach ($file in $files) {
-                  $downloadUrl = "https://huggingface.co/datasets/$env:HF_REPO/resolve/main/$($file.path)"
-                  if ($file.path -like "Desktop/*") {
-                      $outFile = Join-Path $desktopPath ($file.path -replace "Desktop/", "")
-                      Invoke-WebRequest -Uri $downloadUrl -OutFile $outFile -Headers @{ Authorization = "Bearer $env:HF_TOKEN" }
-                  } elseif ($file.path -like "Downloads/*") {
-                      $outFile = Join-Path $downloadsPath ($file.path -replace "Downloads/", "")
-                      Invoke-WebRequest -Uri $downloadUrl -OutFile $outFile -Headers @{ Authorization = "Bearer $env:HF_TOKEN" }
-                  } elseif ($file.path -eq "installed_programs.reg") {
-                      $regFile = "$env:TEMP\installed_programs.reg"
-                      Invoke-WebRequest -Uri $downloadUrl -OutFile $regFile -Headers @{ Authorization = "Bearer $env:HF_TOKEN" }
-                      Write-Host "Restoring Program Registries..."
-                      Start-Process regedit -ArgumentList "/s", $regFile -Wait
-                  }
-              }
-          } catch {
-              Write-Host "No saved files found. Starting fresh!"
+          # استنساخ الـ Repo اللي فيه الملفات
+          if (-not (Test-Path $cloudRepo)) {
+              git clone "https://huggingface.co/datasets/$env:HF_REPO" $cloudRepo 2>$null
+          }
+          
+          if (Test-Path "$cloudRepo\Desktop") {
+              Copy-Item -Path "$cloudRepo\Desktop\*" -Destination $desktopPath -Recurse -Force
+              Write-Host "Desktop files restored!"
+          }
+          if (Test-Path "$cloudRepo\Downloads") {
+              Copy-Item -Path "$cloudRepo\Downloads\*" -Destination $downloadsPath -Recurse -Force
+              Write-Host "Downloads files restored!"
           }
 
       - name: Display RDP Credentials
@@ -105,74 +103,81 @@ jobs:
           Write-Host "Password: $(echo $env:RDP_CREDS)"
           Write-Host "================================================="
 
-      - name: Maintain RDP, Auto-Sync & Zero-Downtime Respawn (3 MINS TEST)
+      - name: Maintain RDP, Auto-Sync & Respawn (3 MINS TEST)
         if: always()
         env:
           PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_REPO: ${{ secrets.HF_REPO }}
         run: |
-          $RunTime = 3 # 3 دقايق عشان التجربة!
+          $RunTime = 3 # 3 دقايق للتجربة
           $StartTime = Get-Date
+          $cloudRepo = "C:\HF_Cloud"
           
-          # Anti-Idle + Auto Cloud Upload (كل 30 ثانية للتجربة)
-          Start-Process -FilePath "powershell" -ArgumentList "-Command", `
-            "while(`$true) { 
-                Start-Sleep -Seconds 30; 
-                Get-Process explorer -ErrorAction SilentlyContinue | Out-Null; 
-                Write-Host 'Anti-Idle Ping'; 
-                try { 
-                    # رفع الـ Desktop
-                    `$desktopFiles = Get-ChildItem 'C:\Users\RDP\Desktop' -File
-                    foreach (`$f in `$desktopFiles) {
-                        curl -s -X PUT \"https://huggingface.co/api/datasets/$env:HF_REPO/commit/main\" -H \"Authorization: Bearer $env:HF_TOKEN\" -F \"operation=add\" -F \"path=Desktop/`$(`$f.Name)\" -F \"file=@`$(`$f.FullName)\" | Out-Null
-                    }
-                    # رفع الـ Downloads
-                    `$dlFiles = Get-ChildItem 'C:\Users\RDP\Downloads' -File
-                    foreach (`$f in `$dlFiles) {
-                        curl -s -X PUT \"https://huggingface.co/api/datasets/$env:HF_REPO/commit/main\" -H \"Authorization: Bearer $env:HF_TOKEN\" -F \"operation=add\" -F \"path=Downloads/`$(`$f.Name)\" -F \"file=@`$(`$f.FullName)\" | Out-Null
-                    }
-                } catch { 
-                    Write-Host 'Sync failed or no new files' 
-                } 
-            }" -WindowStyle Hidden
+          # Anti-Idle + Auto Cloud Sync (كل 30 ثانية للتجربة)
+          # استخدام python script صغيرة عشان نتفادى مشاكل الـ PowerShell Variables
+          $syncScript = @"
+          import os, shutil, subprocess
+          from huggingface_hub import Repository
+          
+          repo_path = r"C:\HF_Cloud"
+          repo_url = f"https://huggingface.co/datasets/{os.environ['HF_REPO']}"
+          token = os.environ['HF_TOKEN']
+          
+          if not os.path.exists(repo_path):
+              repo = Repository(local_dir=repo_path, clone_from=repo_url, token=token)
+          else:
+              repo = Repository(local_dir=repo_path)
+              repo.git_pull()
+              
+          os.makedirs(os.path.join(repo_path, "Desktop"), exist_ok=True)
+          os.makedirs(os.path.join(repo_path, "Downloads"), exist_ok=True)
+
+          # نسخ الملفات من الـ RDP للـ Cloud Repo
+          for f in os.listdir(r"C:\Users\RDP\Desktop"):
+              src = os.path.join(r"C:\Users\RDP\Desktop", f)
+              dst = os.path.join(repo_path, "Desktop", f)
+              if os.path.isfile(src): shutil.copy2(src, dst)
+              
+          for f in os.listdir(r"C:\Users\RDP\Downloads"):
+              src = os.path.join(r"C:\Users\RDP\Downloads", f)
+              dst = os.path.join(repo_path, "Downloads", f)
+              if os.path.isfile(src): shutil.copy2(src, dst)
+
+          repo.git_add()
+          repo.git_commit("Auto Sync from RDP")
+          repo.git_push()
+          "@
+          $syncScript | Out-File -FilePath "C:\sync_hf.py" -Encoding UTF8
+
+          Start-Process -FilePath "python" -ArgumentList "C:\sync_hf.py" -WindowStyle Hidden
 
           while ($true) {
               $Elapsed = (Get-Date) - $StartTime
               if ($Elapsed.TotalMinutes -ge $RunTime) { 
                   Write-Host "[RESPAWN] 3 Minutes Reached! Doing final Cloud Upload before respawn..."
                   
-                  # 1. رفع آخر التعديلات
-                  $desktopFiles = Get-ChildItem "C:\Users\RDP\Desktop" -File
-                  foreach ($f in $desktopFiles) {
-                      curl -s -X PUT "https://huggingface.co/api/datasets/$env:HF_REPO/commit/main" -H "Authorization: Bearer $env:HF_TOKEN" -F "operation=add" -F "path=Desktop/$($f.Name)" -F "file=@$($f.FullName)" | Out-Null
+                  # Final Sync
+                  try {
+                      python C:\sync_hf.py 2>&1 | Write-Host
+                      Write-Host "Final Sync Complete!"
+                  } catch {
+                      Write-Host "Final Sync Failed, but proceeding to Respawn..."
                   }
-                  $dlFiles = Get-ChildItem "C:\Users\RDP\Downloads" -File
-                  foreach ($f in $dlFiles) {
-                      curl -s -X PUT "https://huggingface.co/api/datasets/$env:HF_REPO/commit/main" -H "Authorization: Bearer $env:HF_TOKEN" -F "operation=add" -F "path=Downloads/$($f.Name)" -F "file=@$($f.FullName)" | Out-Null
-                  }
-                  
-                  # 2. حفظ الـ Registry بتاعة البرامج المثبتة
-                  $regFile = "$env:TEMP\installed_programs.reg"
-                  reg export "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall" $regFile /y
-                  reg export "HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall" $regFile /y
-                  curl -s -X PUT "https://huggingface.co/api/datasets/$env:HF_REPO/commit/main" -H "Authorization: Bearer $env:HF_TOKEN" -F "operation=add" -F "path=installed_programs.reg" -F "file=@$regFile" | Out-Null
                   
                   Write-Host "[RESPAWN] Triggering Zero-Downtime Respawn..."
                   $repo = $env:GITHUB_REPOSITORY
                   $wfFile = "infinite-rdp.yml"
                   $apiUrl = "https://api.github.com/repos/$repo/actions/workflows/$($wfFile)/dispatches"
                   
-                  $body = @{
-                    ref = "main"
-                  } | ConvertTo-Json
+                  $body = @{ ref = "main" } | ConvertTo-Json
 
                   try {
                       Invoke-RestMethod -Uri $apiUrl -Method Post -Headers @{
                         "Authorization" = "Bearer $env:PAT_TOKEN"
                         "Accept" = "application/vnd.github.v3+json"
                       } -Body $body -ContentType "application/json"
-                      Write-Host "[RESPAWN] SUCCESS! New Workflow triggered. Your files and programs are immortalized in HuggingFace!"
+                      Write-Host "[RESPAWN] SUCCESS! New Workflow triggered. Your files are immortalized in HuggingFace!"
                   } catch {
                       Write-Error "[RESPAWN] FAILED to trigger workflow. Error: $_"
                   }
@@ -180,5 +185,5 @@ jobs:
                   break 
               }
               Write-Host "[$(Get-Date -Format 'HH:mm:ss')] WinLatest RDP Active (Immortal). Elapsed: $([math]::Round($Elapsed.TotalMinutes, 1)) mins"
-              Start-Sleep -Seconds 10 # 10 ثواني عشان التجربة
+              Start-Sleep -Seconds 10
           }
