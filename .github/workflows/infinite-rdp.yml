@@ -1,0 +1,184 @@
+name: INFINITE-RDP
+
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: write
+
+jobs:
+  windows-latest-rdp:
+    runs-on: windows-2022
+    timeout-minutes: 360 
+    steps:
+      - name: Configure Core RDP Settings
+        run: |
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 0 -Force
+          netsh advfirewall firewall delete rule name="RDP-Tailscale"
+          netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389
+          Restart-Service -Name TermService -Force
+
+      - name: Create RDP User
+        run: |
+          $charSet = @{
+              Upper   = [char[]](65..90)
+              Lower   = [char[]](97..122)
+              Number  = [char[]](48..57)
+              Special = ([char[]](33..47) + [char[]](58..64) + [char[]](91..96) + [char[]](123..126))
+          }
+          $rawPassword = @()
+          $rawPassword += $charSet.Upper | Get-Random -Count 4
+          $rawPassword += $charSet.Lower | Get-Random -Count 4
+          $rawPassword += $charSet.Number | Get-Random -Count 4
+          $rawPassword += $charSet.Special | Get-Random -Count 4
+          $password = -join ($rawPassword | Sort-Object { Get-Random })
+          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
+          New-LocalUser -Name "RDP" -Password $securePass -AccountNeverExpires
+          Add-LocalGroupMember -Group "Administrators" -Member "RDP"
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP"
+          echo "RDP_CREDS=User: RDP | Password: $password" >> $env:GITHUB_ENV
+
+      - name: Install Tailscale
+        run: |
+          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
+          $installerPath = "$env:TEMP\tailscale.msi"
+          Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
+          Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
+          Remove-Item $installerPath -Force
+
+      - name: Establish Tailscale Connection
+        run: |
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=Ahmed-Hacker-Immortal --accept-routes
+          $tsIP = $null
+          $retries = 0
+          while (-not $tsIP -and $retries -lt 15) {
+              $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
+              Start-Sleep -Seconds 10
+              $retries++
+          }
+          if (-not $tsIP) {
+              Write-Warning "Tailscale IP not assigned."
+          } else {
+              echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
+          }
+
+      - name: Restore Files & Programs from HuggingFace
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_REPO: ${{ secrets.HF_REPO }}
+        run: |
+          $desktopPath = "C:\Users\RDP\Desktop"
+          $downloadsPath = "C:\Users\RDP\Downloads"
+          if (-not (Test-Path $desktopPath)) { New-Item -ItemType Directory -Path $desktopPath -Force }
+          if (-not (Test-Path $downloadsPath)) { New-Item -ItemType Directory -Path $downloadsPath -Force }
+          
+          Write-Host "Downloading saved files from HuggingFace..."
+          # تحميل ملفات الـ Desktop
+          try {
+              $files = Invoke-RestMethod -Uri "https://huggingface.co/api/datasets/$env:HF_REPO/tree/main" -Headers @{ Authorization = "Bearer $env:HF_TOKEN" }
+              foreach ($file in $files) {
+                  $downloadUrl = "https://huggingface.co/datasets/$env:HF_REPO/resolve/main/$($file.path)"
+                  if ($file.path -like "Desktop/*") {
+                      $outFile = Join-Path $desktopPath ($file.path -replace "Desktop/", "")
+                      Invoke-WebRequest -Uri $downloadUrl -OutFile $outFile -Headers @{ Authorization = "Bearer $env:HF_TOKEN" }
+                  } elseif ($file.path -like "Downloads/*") {
+                      $outFile = Join-Path $downloadsPath ($file.path -replace "Downloads/", "")
+                      Invoke-WebRequest -Uri $downloadUrl -OutFile $outFile -Headers @{ Authorization = "Bearer $env:HF_TOKEN" }
+                  } elseif ($file.path -eq "installed_programs.reg") {
+                      $regFile = "$env:TEMP\installed_programs.reg"
+                      Invoke-WebRequest -Uri $downloadUrl -OutFile $regFile -Headers @{ Authorization = "Bearer $env:HF_TOKEN" }
+                      Write-Host "Restoring Program Registries..."
+                      Start-Process regedit -ArgumentList "/s", $regFile -Wait
+                  }
+              }
+          } catch {
+              Write-Host "No saved files found. Starting fresh!"
+          }
+
+      - name: Display RDP Credentials
+        run: |
+          Write-Host "=== WINDOWS LATEST RDP (IMMORTAL ZERO-DOWNTIME) ==="
+          Write-Host "Address: $env:TAILSCALE_IP"
+          Write-Host "Username: RDP"
+          Write-Host "Password: $(echo $env:RDP_CREDS)"
+          Write-Host "================================================="
+
+      - name: Maintain RDP, Auto-Sync & Zero-Downtime Respawn (3 MINS TEST)
+        if: always()
+        env:
+          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_REPO: ${{ secrets.HF_REPO }}
+        run: |
+          $RunTime = 3 # 3 دقايق عشان التجربة!
+          $StartTime = Get-Date
+          
+          # Anti-Idle + Auto Cloud Upload (كل 30 ثانية للتجربة)
+          Start-Process -FilePath "powershell" -ArgumentList "-Command", `
+            "while(`$true) { 
+                Start-Sleep -Seconds 30; 
+                Get-Process explorer -ErrorAction SilentlyContinue | Out-Null; 
+                Write-Host 'Anti-Idle Ping'; 
+                try { 
+                    # رفع الـ Desktop
+                    `$desktopFiles = Get-ChildItem 'C:\Users\RDP\Desktop' -File
+                    foreach (`$f in `$desktopFiles) {
+                        curl -s -X PUT \"https://huggingface.co/api/datasets/$env:HF_REPO/commit/main\" -H \"Authorization: Bearer $env:HF_TOKEN\" -F \"operation=add\" -F \"path=Desktop/`$(`$f.Name)\" -F \"file=@`$(`$f.FullName)\" | Out-Null
+                    }
+                    # رفع الـ Downloads
+                    `$dlFiles = Get-ChildItem 'C:\Users\RDP\Downloads' -File
+                    foreach (`$f in `$dlFiles) {
+                        curl -s -X PUT \"https://huggingface.co/api/datasets/$env:HF_REPO/commit/main\" -H \"Authorization: Bearer $env:HF_TOKEN\" -F \"operation=add\" -F \"path=Downloads/`$(`$f.Name)\" -F \"file=@`$(`$f.FullName)\" | Out-Null
+                    }
+                } catch { 
+                    Write-Host 'Sync failed or no new files' 
+                } 
+            }" -WindowStyle Hidden
+
+          while ($true) {
+              $Elapsed = (Get-Date) - $StartTime
+              if ($Elapsed.TotalMinutes -ge $RunTime) { 
+                  Write-Host "[RESPAWN] 3 Minutes Reached! Doing final Cloud Upload before respawn..."
+                  
+                  # 1. رفع آخر التعديلات
+                  $desktopFiles = Get-ChildItem "C:\Users\RDP\Desktop" -File
+                  foreach ($f in $desktopFiles) {
+                      curl -s -X PUT "https://huggingface.co/api/datasets/$env:HF_REPO/commit/main" -H "Authorization: Bearer $env:HF_TOKEN" -F "operation=add" -F "path=Desktop/$($f.Name)" -F "file=@$($f.FullName)" | Out-Null
+                  }
+                  $dlFiles = Get-ChildItem "C:\Users\RDP\Downloads" -File
+                  foreach ($f in $dlFiles) {
+                      curl -s -X PUT "https://huggingface.co/api/datasets/$env:HF_REPO/commit/main" -H "Authorization: Bearer $env:HF_TOKEN" -F "operation=add" -F "path=Downloads/$($f.Name)" -F "file=@$($f.FullName)" | Out-Null
+                  }
+                  
+                  # 2. حفظ الـ Registry بتاعة البرامج المثبتة
+                  $regFile = "$env:TEMP\installed_programs.reg"
+                  reg export "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall" $regFile /y
+                  reg export "HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall" $regFile /y
+                  curl -s -X PUT "https://huggingface.co/api/datasets/$env:HF_REPO/commit/main" -H "Authorization: Bearer $env:HF_TOKEN" -F "operation=add" -F "path=installed_programs.reg" -F "file=@$regFile" | Out-Null
+                  
+                  Write-Host "[RESPAWN] Triggering Zero-Downtime Respawn..."
+                  $repo = $env:GITHUB_REPOSITORY
+                  $wfFile = "infinite-rdp.yml"
+                  $apiUrl = "https://api.github.com/repos/$repo/actions/workflows/$($wfFile)/dispatches"
+                  
+                  $body = @{
+                    ref = "main"
+                  } | ConvertTo-Json
+
+                  try {
+                      Invoke-RestMethod -Uri $apiUrl -Method Post -Headers @{
+                        "Authorization" = "Bearer $env:PAT_TOKEN"
+                        "Accept" = "application/vnd.github.v3+json"
+                      } -Body $body -ContentType "application/json"
+                      Write-Host "[RESPAWN] SUCCESS! New Workflow triggered. Your files and programs are immortalized in HuggingFace!"
+                  } catch {
+                      Write-Error "[RESPAWN] FAILED to trigger workflow. Error: $_"
+                  }
+                  
+                  break 
+              }
+              Write-Host "[$(Get-Date -Format 'HH:mm:ss')] WinLatest RDP Active (Immortal). Elapsed: $([math]::Round($Elapsed.TotalMinutes, 1)) mins"
+              Start-Sleep -Seconds 10 # 10 ثواني عشان التجربة
+          }
