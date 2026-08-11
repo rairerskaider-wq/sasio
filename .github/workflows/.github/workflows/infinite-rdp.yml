@@ -1,0 +1,192 @@
+name: INFINITE-RDP
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["INFINITE-RDP"]
+    types:
+      - completed
+
+permissions:
+  actions: write
+  contents: write
+
+concurrency:
+  group: rdp-immortal-group
+  cancel-in-progress: true
+
+jobs:
+  windows-latest-rdp:
+    runs-on: windows-2022
+    timeout-minutes: 360 
+    steps:
+      - name: Checkout Code (Required for Ghost Trigger)
+        uses: actions/checkout@v4
+
+      - name: Configure Core RDP Settings
+        run: |
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 0 -Force
+          netsh advfirewall firewall delete rule name="RDP-Tailscale"
+          netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389
+          Restart-Service -Name TermService -Force
+
+      - name: Create RDP User
+        run: |
+          $charSet = @{
+              Upper   = [char[]](65..90)
+              Lower   = [char[]](97..122)
+              Number  = [char[]](48..57)
+              Special = ([char[]](33..47) + [char[]](58..64) + [char[]](91..96) + [char[]](123..126))
+          }
+          $rawPassword = @()
+          $rawPassword += $charSet.Upper | Get-Random -Count 4
+          $rawPassword += $charSet.Lower | Get-Random -Count 4
+          $rawPassword += $charSet.Number | Get-Random -Count 4
+          $rawPassword += $charSet.Special | Get-Random -Count 4
+          $password = -join ($rawPassword | Sort-Object { Get-Random })
+          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
+          New-LocalUser -Name "RDP" -Password $securePass -AccountNeverExpires
+          Add-LocalGroupMember -Group "Administrators" -Member "RDP"
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP"
+          echo "RDP_CREDS=User: RDP | Password: $password" >> $env:GITHUB_ENV
+
+      - name: Install Tailscale
+        run: |
+          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
+          $installerPath = "$env:TEMP\tailscale.msi"
+          Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
+          Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
+          Remove-Item $installerPath -Force
+
+      - name: Establish Tailscale Connection
+        run: |
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=Ahmed-Hacker-Immortal --accept-routes
+          $tsIP = $null
+          $retries = 0
+          while (-not $tsIP -and $retries -lt 15) {
+              $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
+              Start-Sleep -Seconds 10
+              $retries++
+          }
+          if (-not $tsIP) {
+              Write-Warning "Tailscale IP not assigned."
+          } else {
+              echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
+          }
+
+      - name: Setup HuggingFace CLI & Restore Files
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_REPO: ${{ secrets.HF_REPO }}
+        run: |
+          pip install huggingface_hub -q
+          huggingface-cli login --token $env:HF_TOKEN
+
+          $desktopPath = "C:\Users\RDP\Desktop"
+          $downloadsPath = "C:\Users\RDP\Downloads"
+          $cloudRepo = "C:\HF_Cloud"
+          
+          if (-not (Test-Path $desktopPath)) { New-Item -ItemType Directory -Path $desktopPath -Force }
+          if (-not (Test-Path $downloadsPath)) { New-Item -ItemType Directory -Path $downloadsPath -Force }
+
+          Write-Host "Downloading saved files from HuggingFace..."
+          if (-not (Test-Path $cloudRepo)) {
+              git clone "https://huggingface.co/datasets/$env:HF_REPO" $cloudRepo 2>$null
+          }
+          
+          if (Test-Path "$cloudRepo\Desktop") {
+              Copy-Item -Path "$cloudRepo\Desktop\*" -Destination $desktopPath -Recurse -Force
+              Write-Host "Desktop files restored!"
+          }
+          if (Test-Path "$cloudRepo\Downloads") {
+              Copy-Item -Path "$cloudRepo\Downloads\*" -Destination $downloadsPath -Recurse -Force
+              Write-Host "Downloads files restored!"
+          }
+
+      - name: Display RDP Credentials
+        run: |
+          Write-Host "=== WINDOWS LATEST RDP (IMMORTAL ZERO-DOWNTIME) ==="
+          Write-Host "Address: $env:TAILSCALE_IP"
+          Write-Host "Username: RDP"
+          Write-Host "Password: $(echo $env:RDP_CREDS)"
+          Write-Host "================================================="
+
+      - name: Maintain RDP, Auto-Sync & Ghost Respawn
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_REPO: ${{ secrets.HF_REPO }}
+        run: |
+          $RunTime = 355 # 5 ساعات و 55 دقيقة (مدة آمنة جداً)
+          $StartTime = Get-Date
+          $cloudRepo = "C:\HF_Cloud"
+          
+          # Python Sync Script
+          $syncScript = @"
+          import os, shutil
+          from huggingface_hub import Repository
+          repo_path = r"C:\HF_Cloud"
+          repo_url = f"https://huggingface.co/datasets/{os.environ['HF_REPO']}"
+          token = os.environ['HF_TOKEN']
+          if not os.path.exists(repo_path):
+              repo = Repository(local_dir=repo_path, clone_from=repo_url, token=token)
+          else:
+              repo = Repository(local_dir=repo_path)
+              repo.git_pull()
+          os.makedirs(os.path.join(repo_path, "Desktop"), exist_ok=True)
+          os.makedirs(os.path.join(repo_path, "Downloads"), exist_ok=True)
+          for f in os.listdir(r"C:\Users\RDP\Desktop"):
+              src = os.path.join(r"C:\Users\RDP\Desktop", f)
+              dst = os.path.join(repo_path, "Desktop", f)
+              if os.path.isfile(src): shutil.copy2(src, dst)
+          for f in os.listdir(r"C:\Users\RDP\Downloads"):
+              src = os.path.join(r"C:\Users\RDP\Downloads", f)
+              dst = os.path.join(repo_path, "Downloads", f)
+              if os.path.isfile(src): shutil.copy2(src, dst)
+          repo.git_add()
+          repo.git_commit("Auto Sync from RDP")
+          repo.git_push()
+          "@
+          $syncScript | Out-File -FilePath "C:\sync_hf.py" -Encoding UTF8
+          Start-Process -FilePath "python" -ArgumentList "C:\sync_hf.py" -WindowStyle Hidden
+
+          # Ghost Trigger Script (يعمل Commit صغير في الـ Repo عشان يشغل الـ Workflow بدون API Limits)
+          $ghostScript = @"
+          import os, subprocess
+          repo_dir = os.environ['GITHUB_WORKSPACE']
+          os.chdir(repo_dir)
+          # ملف صغير عشان نعمل ليه Update ونشغل الـ workflow_run
+          with open("ghost_trigger.txt", "a") as f:
+              f.write(f"Respawn at {os.popen('date /t & time /t').read()}\n")
+          subprocess.run(["git", "config", "user.name", "Ghost"], cwd=repo_dir)
+          subprocess.run(["git", "config", "user.email", "ghost@hacker.com"], cwd=repo_dir)
+          subprocess.run(["git", "add", "ghost_trigger.txt"], cwd=repo_dir)
+          subprocess.run(["git", "commit", "-m", "Ghost Respawn Trigger"], cwd=repo_dir)
+          subprocess.run(["git", "push"], cwd=repo_dir)
+          "@
+          $ghostScript | Out-File -FilePath "C:\ghost_trigger.py" -Encoding UTF8
+
+          while ($true) {
+              $Elapsed = (Get-Date) - $StartTime
+              if ($Elapsed.TotalMinutes -ge $RunTime) { 
+                  Write-Host "[RESPAWN] Approaching Limit! Doing final Cloud Sync..."
+                  try {
+                      python C:\sync_hf.py 2>&1 | Write-Host
+                  } catch {}
+                  
+                  Write-Host "[GHOST] Triggering Respawn via Git Push (No API Limits)..."
+                  try {
+                      python C:\ghost_trigger.py 2>&1 | Write-Host
+                      Write-Host "[GHOST] SUCCESS! The Workflow will restart automatically. Your files are immortalized!"
+                  } catch {
+                      Write-Error "[GHOST] FAILED. Error: $_"
+                  }
+                  
+                  break 
+              }
+              Write-Host "[$(Get-Date -Format 'HH:mm:ss')] WinLatest RDP Active (Immortal). Elapsed: $([math]::Round($Elapsed.TotalMinutes, 1)) mins"
+              Start-Sleep -Seconds 60
+          }
