@@ -1,10 +1,10 @@
-name: INFINITE-RDP
+name: ارديبي 5 دقائق ويحضر - 110 جيقا فارغة
 
 on:
   workflow_dispatch:
 
 jobs:
-  windows-latest-rdp:
+  zero-wipe-windows-latest:
     runs-on: windows-2022
     timeout-minutes: 360 
     steps:
@@ -17,12 +17,65 @@ jobs:
           netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389
           Restart-Service -Name TermService -Force
 
+      - name: ABSOLUTE ZERO - NUKE EVERY SINGLE APP
+        run: |
+          Write-Host "IGNITING ABSOLUTE ZERO WIPE..."
+          $criticalApps = @("Tailscale", "PowerShell")
+          $apps = Get-ItemProperty HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\* | Where-Object { $_.DisplayName -and ($criticalApps | Where-Object { $_.DisplayName -notlike "*$_*" }) }
+          
+          $apps | ForEach-Object -Parallel {
+              $app = $_
+              Write-Host "NUKING: $($app.DisplayName)"
+              if ($app.PSChildName) {
+                  Remove-Item -Path "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$($app.PSChildName)" -Force -Recurse -ErrorAction SilentlyContinue
+              }
+              if ($app.InstallLocation) {
+                  Remove-Item -Path $app.InstallLocation -Recurse -Force -ErrorAction SilentlyContinue
+              }
+          } -ThrottleLimit 20
+          
+          $dirsToNuke = @(
+              "C:\aliyun-cli",
+              "C:\Android",
+              "C:\azureCli",
+              "C:\azureDevOpsCli",
+              "C:\cobertura-2.1.1",
+              "C:\ghcup",
+              "C:\hostedtoolcache",
+              "C:\inetpub",
+              "C:\Program Files\Epic Games",
+              "C:\Program Files (x86)\Epic Games",
+              "C:\Program Files\MongoDB",
+              "C:\Program Files\PostgreSQL",
+              "C:\Program Files\nodejs",
+              "C:\Program Files\MySQL",
+              "C:\Program Files\Amazon",
+              "C:\Program Files\Mozilla Firefox",
+              "C:\Program Files\Python*",
+              "C:\Program Files\Inno Setup*",
+              "C:\Program Files\Microsoft Visual Studio*",
+              "C:\Program Files (x86)\Mozilla Firefox",
+              "C:\Program Files (x86)\Microsoft\Edge",
+              "C:\Program Files (x86)\Inno Setup*",
+              "C:\Program Files (x86)\Microsoft Visual Studio*",
+              "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\GitHub*"
+          )
+          
+          $dirsToNuke | ForEach-Object -Parallel {
+              Remove-Item -Path $_ -Recurse -Force -ErrorAction SilentlyContinue
+          } -ThrottleLimit 20
+
+          Remove-Item -Path "$env:TEMP\*" -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item -Path "C:\Windows\Prefetch\*" -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item -Path "C:\Windows\Temp\*" -Recurse -Force -ErrorAction SilentlyContinue
+          Write-Host "ABSOLUTE ZERO WIPE COMPLETE. 0 APPS INSTALLED."
+
       - name: Create RDP User
         run: |
           $charSet = @{
-              Upper   = [char[]](65..90)
-              Lower   = [char[]](97..122)
-              Number  = [char[]](48..57)
+              Upper = [char[]](65..90)
+              Lower = [char[]](97..122)
+              Number = [char[]](48..57)
               Special = ([char[]](33..47) + [char[]](58..64) + [char[]](91..96) + [char[]](123..126))
           }
           $rawPassword = @()
@@ -63,11 +116,11 @@ jobs:
       
       - name: Display RDP Credentials
         run: |
-          Write-Host "=== WINDOWS LATEST RDP (IMMORTAL) ==="
+          Write-Host "=== WINDOWS LATEST RDP (0 APPS) ==="
           Write-Host "Address: $env:TAILSCALE_IP"
           Write-Host "Username: RDP"
           Write-Host "Password: $(echo $env:RDP_CREDS)"
-          Write-Host "====================================="
+          Write-Host "==================================="
 
       - name: Maintain RDP for 355 Minutes
         run: |
