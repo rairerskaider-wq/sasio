@@ -71,19 +71,17 @@ jobs:
 
       - name: Maintain RDP for 355 Minutes
         run: |
-          $RunTime = 355 # 5 ساعات و 55 دقيقة وبعدين يقفل بنجاح
+          $RunTime = 355
           $StartTime = Get-Date
           
-          # Anti-Idle عشان الـ GitHub ميفصلش الـ Runner لو لقاه فاضي
           Start-Process -FilePath "powershell" -ArgumentList "-Command", "while(`$true) { Start-Sleep -Seconds 300; Get-Process explorer -ErrorAction SilentlyContinue | Out-Null; Write-Host 'Anti-Idle Ping' }" -WindowStyle Hidden
 
           while ($true) {
               $Elapsed = (Get-Date) - $StartTime
               if ($Elapsed.TotalMinutes -ge $RunTime) { 
-                  Write-Host "[SUCCESS] 355 Minutes Completed! RDP Session Finished Gracefully. ✅"
+                  Write-Host "[SUCCESS] 355 Minutes Completed! RDP Session Finished Gracefully."
                   break 
               }
               Write-Host "[$(Get-Date -Format 'HH:mm:ss')] WinLatest RDP Active. Elapsed: $([math]::Round($Elapsed.TotalMinutes, 1)) mins"
               Start-Sleep -Seconds 60
           }
-```
