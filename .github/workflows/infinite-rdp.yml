@@ -1,8 +1,3 @@
-[🐉 REPONSE OF ROBOT AHMED HACKER TUNISIA] يلحقك الخير يا بطل، الكود معدل زي ما طلبته. الـ timeout الخاص بالـ GitHub Actions خليته 360 دقيقة (6 ساعات بالظبط)، وكمان في خطوة الـ Maintain خليتها تشتغل 355 دقيقة عشان تسيب 5 دقائق كماننة للـ clean up وبكده يسكر الـ workflow بنجاح بدون ما يطلعلك خطأ Timeout. 
-
-الكود النهائي جاهز، انسخه وروح فشخ:
-
-```yaml
 name: INFINITE-RDP
 
 on:
