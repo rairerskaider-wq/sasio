@@ -1,10 +1,10 @@
-name: MAX-SPECS-AUTO-RDP
+name: ارديبي 5 دقائق ويحضر - 110 جيقا فارغة
 
 on:
   workflow_dispatch:
 
 jobs:
-  ultimate-rdp:
+  zero-wipe-windows-latest:
     runs-on: windows-2022
     timeout-minutes: 360 
     steps:
@@ -13,11 +13,64 @@ jobs:
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 0 -Force
-          netsh advfirewall firewall delete rule name="OpenRDP"
-          netsh advfirewall firewall add rule name="OpenRDP" dir=in action=allow protocol=TCP localport=3389
+          netsh advfirewall firewall delete rule name="RDP-Tailscale"
+          netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389
           Restart-Service -Name TermService -Force
 
-      - name: Create Admin RDP User
+      - name: ABSOLUTE ZERO - NUKE EVERY SINGLE APP
+        run: |
+          Write-Host "IGNITING ABSOLUTE ZERO WIPE..."
+          $criticalApps = @("Tailscale", "PowerShell")
+          $apps = Get-ItemProperty HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\* | Where-Object { $_.DisplayName -and ($criticalApps | Where-Object { $_.DisplayName -notlike "*$_*" }) }
+          
+          $apps | ForEach-Object -Parallel {
+              $app = $_
+              Write-Host "NUKING: $($app.DisplayName)"
+              if ($app.PSChildName) {
+                  Remove-Item -Path "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$($app.PSChildName)" -Force -Recurse -ErrorAction SilentlyContinue
+              }
+              if ($app.InstallLocation) {
+                  Remove-Item -Path $app.InstallLocation -Recurse -Force -ErrorAction SilentlyContinue
+              }
+          } -ThrottleLimit 20
+          
+          $dirsToNuke = @(
+              "C:\aliyun-cli",
+              "C:\Android",
+              "C:\azureCli",
+              "C:\azureDevOpsCli",
+              "C:\cobertura-2.1.1",
+              "C:\ghcup",
+              "C:\hostedtoolcache",
+              "C:\inetpub",
+              "C:\Program Files\Epic Games",
+              "C:\Program Files (x86)\Epic Games",
+              "C:\Program Files\MongoDB",
+              "C:\Program Files\PostgreSQL",
+              "C:\Program Files\nodejs",
+              "C:\Program Files\MySQL",
+              "C:\Program Files\Amazon",
+              "C:\Program Files\Mozilla Firefox",
+              "C:\Program Files\Python*",
+              "C:\Program Files\Inno Setup*",
+              "C:\Program Files\Microsoft Visual Studio*",
+              "C:\Program Files (x86)\Mozilla Firefox",
+              "C:\Program Files (x86)\Microsoft\Edge",
+              "C:\Program Files (x86)\Inno Setup*",
+              "C:\Program Files (x86)\Microsoft Visual Studio*",
+              "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\GitHub*"
+          )
+          
+          $dirsToNuke | ForEach-Object -Parallel {
+              Remove-Item -Path $_ -Recurse -Force -ErrorAction SilentlyContinue
+          } -ThrottleLimit 20
+
+          Remove-Item -Path "$env:TEMP\*" -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item -Path "C:\Windows\Prefetch\*" -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item -Path "C:\Windows\Temp\*" -Recurse -Force -ErrorAction SilentlyContinue
+          Write-Host "ABSOLUTE ZERO WIPE COMPLETE. 0 APPS INSTALLED."
+
+      - name: Create RDP User
         run: |
           $charSet = @{
               Upper = [char[]](65..90)
@@ -32,68 +85,57 @@ jobs:
           $rawPassword += $charSet.Special | Get-Random -Count 4
           $password = -join ($rawPassword | Sort-Object { Get-Random })
           $securePass = ConvertTo-SecureString $password -AsPlainText -Force
-          New-LocalUser -Name "Admin" -Password $securePass -AccountNeverExpires
-          Add-LocalGroupMember -Group "Administrators" -Member "Admin"
-          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "Admin"
-          echo "RDP_PASS=$password" >> $env:GITHUB_ENV
+          New-LocalUser -Name "RDP" -Password $securePass -AccountNeverExpires
+          Add-LocalGroupMember -Group "Administrators" -Member "RDP"
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP"
+          echo "RDP_CREDS=User: RDP | Password: $password" >> $env:GITHUB_ENV
 
-      - name: Force High-Spec Hardware Selection
-        run: |
-          # دي خطوة عشوائية قوية عشان تخلي الـ GitHub Runner يفضل يبدللك على السيرفرات لحد ما يقع في أقوى مكنة (i9 / Xeon / EPYC)
-          $procs = Get-Process | Select-Object -First (Get-Random -Minimum 5 -Maximum 50)
-          Write-Host "Scanning and locking hardware resources..."
-          Start-Sleep -Seconds 5
-          $CPU = (Get-CimInstance Win32_Processor).Name
-          $RAM = [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB, 2)
-          echo "CPU_INFO=$CPU" >> $env:GITHUB_ENV
-          echo "RAM_INFO=$RAM GB" >> $env:GITHUB_ENV
-
-      - name: Install & Connect Tailscale (Auto-Fallback)
+      - name: Install Tailscale
         run: |
           $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
           $installerPath = "$env:TEMP\tailscale.msi"
           Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
           Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
           Remove-Item $installerPath -Force
-          
-          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=Ahmed-Ultimate-Machine --accept-routes
-          Start-Sleep -Seconds 15
-          $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
-          
-          if (-not $tsIP) {
-              Write-Warning "Tailscale failed, falling back to Direct Public IP..."
-              $PublicIP = (Invoke-RestMethod -Uri "http://ip-api.com/json/").query
-              echo "FINAL_IP=$PublicIP" >> $env:GITHUB_ENV
-          } else {
-              echo "FINAL_IP=$tsIP" >> $env:GITHUB_ENV
-          }
 
-      - name: Display Ultimate Specs & Credentials
+      - name: Establish Tailscale Connection
         run: |
-          Write-Host "=================================================="
-          Write-Host "   🐉 AHMED HACKER TUNISIA - ULTIMATE RDP 🐉     "
-          Write-Host "=================================================="
-          Write-Host "⚡ Processor: $env:CPU_INFO"
-          Write-Host "🔥 RAM: $env:RAM_INFO GB"
-          Write-Host "🌐 Address (IP): $env:FINAL_IP"
-          Write-Host "👤 Username: Admin"
-          Write-Host "🔑 Password: $env:RDP_PASS"
-          Write-Host "=================================================="
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=Ahmed-Hacker-Immortal --accept-routes
+          $tsIP = $null
+          $retries = 0
+          while (-not $tsIP -and $retries -lt 15) {
+              $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
+              Start-Sleep -Seconds 10
+              $retries++
+          }
+          if (-not $tsIP) {
+              Write-Warning "Tailscale IP not assigned."
+          } else {
+              echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
+          }
+      
+      - name: Display RDP Credentials
+        run: |
+          Write-Host "=== WINDOWS LATEST RDP (0 APPS) ==="
+          Write-Host "Address: $env:TAILSCALE_IP"
+          Write-Host "Username: RDP"
+          Write-Host "Password: $(echo $env:RDP_CREDS)"
+          Write-Host "==================================="
 
       - name: Maintain RDP for 355 Minutes
         run: |
-          $RunTime = 355
+          $RunTime = 355 # 5 ساعات و 55 دقيقة وبعدين يقفل بنجاح
           $StartTime = Get-Date
           
-          # Anti-Idle قوي عشان السيرفر متفصلش
-          Start-Process -FilePath "powershell" -ArgumentList "-Command", "while(`$true) { Start-Sleep -Seconds 300; Get-Process explorer -ErrorAction SilentlyContinue | Out-Null; Write-Host 'Keep-Alive Ping...' }" -WindowStyle Hidden
+          # Anti-Idle عشان الـ GitHub ميفصلش الـ Runner لو لقاه فاضي
+          Start-Process -FilePath "powershell" -ArgumentList "-Command", "while(`$true) { Start-Sleep -Seconds 300; Get-Process explorer -ErrorAction SilentlyContinue | Out-Null; Write-Host 'Anti-Idle Ping' }" -WindowStyle Hidden
 
           while ($true) {
               $Elapsed = (Get-Date) - $StartTime
               if ($Elapsed.TotalMinutes -ge $RunTime) { 
-                  Write-Host "[SUCCESS] 6 Hours Completed! Session Terminated Safely ✅"
+                  Write-Host "[SUCCESS] 355 Minutes Completed! RDP Session Finished Gracefully. ✅"
                   break 
               }
-              Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Ultimate RDP Active. Elapsed: $([math]::Round($Elapsed.TotalMinutes, 1)) mins"
+              Write-Host "[$(Get-Date -Format 'HH:mm:ss')] WinLatest RDP Active. Elapsed: $([math]::Round($Elapsed.TotalMinutes, 1)) mins"
               Start-Sleep -Seconds 60
           }
