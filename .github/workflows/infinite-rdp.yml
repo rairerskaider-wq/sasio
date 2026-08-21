@@ -76,7 +76,7 @@ jobs:
           Write-Host "⚡ Processor: $env:CPU_INFO"
           Write-Host "🔥 RAM: $env:RAM_INFO GB"
           Write-Host "🌐 Address (IP): $env:FINAL_IP"
-          Write-Host "👤 Username: Admin"
+          Write-Host "👤 Username: RDP"
           Write-Host "🔑 Password: $env:RDP_PASS"
           Write-Host "=================================================="
 
