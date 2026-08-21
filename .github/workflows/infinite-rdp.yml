@@ -1,13 +1,32 @@
-name: ارديبي 5 دقائق ويحضر - 110 جيقا فارغة
+name: INFINITE-RDP
 
 on:
   workflow_dispatch:
 
 jobs:
-  zero-wipe-windows-latest:
+  windows-latest-rdp:
     runs-on: windows-2022
     timeout-minutes: 360 
     steps:
+      - name: MAX Hardware Selection
+        run: |
+          # تفعيل كل الأنوية المتاحة
+          $cores = (Get-CimInstance Win32_Processor).NumberOfLogicalProcessors
+          $ramGB = [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB, 2)
+          Write-Host "=== HARDWARE DETECTED ==="
+          Write-Host "CPU Cores: $cores"
+          Write-Host "RAM: $ramGB GB"
+          Write-Host "========================="
+          
+          # ضبط أداء النظام للأقصى
+          powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c
+          Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Power' -Name 'CsEnabled' -Value 0 -Force
+          
+          # تعطيل أي تقييد على الموارد
+          $regPath = 'HKLM:\SYSTEM\CurrentControlSet\Services\VDMMgr\Parameters'
+          if (!(Test-Path $regPath)) { New-Item -Path $regPath -Force | Out-Null }
+          Set-ItemProperty -Path $regPath -Name 'MaxVRAM' -Value 0xFFFFFFFF -Force
+
       - name: Configure Core RDP Settings
         run: |
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
@@ -16,59 +35,6 @@ jobs:
           netsh advfirewall firewall delete rule name="RDP-Tailscale"
           netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389
           Restart-Service -Name TermService -Force
-
-      - name: ABSOLUTE ZERO - NUKE EVERY SINGLE APP
-        run: |
-          Write-Host "IGNITING ABSOLUTE ZERO WIPE..."
-          $criticalApps = @("Tailscale", "PowerShell")
-          $apps = Get-ItemProperty HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\* | Where-Object { $_.DisplayName -and ($criticalApps | Where-Object { $_.DisplayName -notlike "*$_*" }) }
-          
-          $apps | ForEach-Object -Parallel {
-              $app = $_
-              Write-Host "NUKING: $($app.DisplayName)"
-              if ($app.PSChildName) {
-                  Remove-Item -Path "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$($app.PSChildName)" -Force -Recurse -ErrorAction SilentlyContinue
-              }
-              if ($app.InstallLocation) {
-                  Remove-Item -Path $app.InstallLocation -Recurse -Force -ErrorAction SilentlyContinue
-              }
-          } -ThrottleLimit 20
-          
-          $dirsToNuke = @(
-              "C:\aliyun-cli",
-              "C:\Android",
-              "C:\azureCli",
-              "C:\azureDevOpsCli",
-              "C:\cobertura-2.1.1",
-              "C:\ghcup",
-              "C:\hostedtoolcache",
-              "C:\inetpub",
-              "C:\Program Files\Epic Games",
-              "C:\Program Files (x86)\Epic Games",
-              "C:\Program Files\MongoDB",
-              "C:\Program Files\PostgreSQL",
-              "C:\Program Files\nodejs",
-              "C:\Program Files\MySQL",
-              "C:\Program Files\Amazon",
-              "C:\Program Files\Mozilla Firefox",
-              "C:\Program Files\Python*",
-              "C:\Program Files\Inno Setup*",
-              "C:\Program Files\Microsoft Visual Studio*",
-              "C:\Program Files (x86)\Mozilla Firefox",
-              "C:\Program Files (x86)\Microsoft\Edge",
-              "C:\Program Files (x86)\Inno Setup*",
-              "C:\Program Files (x86)\Microsoft Visual Studio*",
-              "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\GitHub*"
-          )
-          
-          $dirsToNuke | ForEach-Object -Parallel {
-              Remove-Item -Path $_ -Recurse -Force -ErrorAction SilentlyContinue
-          } -ThrottleLimit 20
-
-          Remove-Item -Path "$env:TEMP\*" -Recurse -Force -ErrorAction SilentlyContinue
-          Remove-Item -Path "C:\Windows\Prefetch\*" -Recurse -Force -ErrorAction SilentlyContinue
-          Remove-Item -Path "C:\Windows\Temp\*" -Recurse -Force -ErrorAction SilentlyContinue
-          Write-Host "ABSOLUTE ZERO WIPE COMPLETE. 0 APPS INSTALLED."
 
       - name: Create RDP User
         run: |
@@ -116,20 +82,21 @@ jobs:
       
       - name: Display RDP Credentials
         run: |
-          Write-Host "=== WINDOWS LATEST RDP (0 APPS) ==="
+          $cores = (Get-CimInstance Win32_Processor).NumberOfLogicalProcessors
+          $ramGB = [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB, 2)
+          Write-Host "=== WINDOWS LATEST RDP (IMMORTAL) ==="
           Write-Host "Address: $env:TAILSCALE_IP"
           Write-Host "Username: RDP"
           Write-Host "Password: $(echo $env:RDP_CREDS)"
-          Write-Host "==================================="
+          Write-Host "CPU Cores: $cores"
+          Write-Host "RAM: $ramGB GB"
+          Write-Host "====================================="
 
       - name: Maintain RDP for 355 Minutes
         run: |
-          $RunTime = 355 # 5 ساعات و 55 دقيقة وبعدين يقفل بنجاح
+          $RunTime = 355
           $StartTime = Get-Date
-          
-          # Anti-Idle عشان الـ GitHub ميفصلش الـ Runner لو لقاه فاضي
           Start-Process -FilePath "powershell" -ArgumentList "-Command", "while(`$true) { Start-Sleep -Seconds 300; Get-Process explorer -ErrorAction SilentlyContinue | Out-Null; Write-Host 'Anti-Idle Ping' }" -WindowStyle Hidden
-
           while ($true) {
               $Elapsed = (Get-Date) - $StartTime
               if ($Elapsed.TotalMinutes -ge $RunTime) { 
